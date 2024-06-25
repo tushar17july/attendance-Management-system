@@ -1,0 +1,486 @@
+--creating database for employee_attendance_system 
+
+create database employee_attendance_system;
+
+
+/*created two schema using 
+First Schema for all attendance level transaction
+Second Schema for all employee level transaction
+Note: We can do all the stuff in one Schema also 
+*/
+
+CREATE SCHEMA attendance_level AUTHORIZATION postgres;
+
+CREATE SCHEMA employee_level AUTHORIZATION postgres;
+
+-----------------------------------------------For employee_level Schema---------------------------------------------------------------
+
+-----------------------------------------------For employee_level Table 1---------------------------------------------------------------
+-- office_master : office_master contains the offices master have office_id as primary key
+
+CREATE TABLE employee_level.office_master (
+	office_id varchar(3) NOT NULL,
+	office_address text NOT NULL,
+	office_city varchar(100) NOT NULL,
+	office_state varchar(100) NOT NULL,
+	CONSTRAINT office_master_p_key PRIMARY KEY (office_id)
+);
+
+-----------------------------------------------For employee_level Table 2---------------------------------------------------------------
+-- employee_mst : office_master contains the employee master have office_id as FOREIGN Key while employee id as Primary key
+-- hold information of employee include there date of joining , last working day , designation, etc 
+-- Employee hierarcy will help us know the the L1 and L2 managers if any 
+
+CREATE TABLE employee_level.employee_mst (
+	employee_id varchar(10) NOT NULL,
+	employee_name varchar(100) NULL,
+	employee_email varchar(200) NULL,
+	employee_number varchar(10) NULL,
+	employee_manager varchar(100)  NULL,
+	employee_hierarcy varchar(200) NULL,
+	employee_doj date NOT NULL,
+	employee_dob date NULL,
+	employee_address text NULL,
+	created_timestamp timestamp NULL,
+	modified_timestamp timestamp NULL,
+	department varchar(10) NULL,
+	office_id varchar NOT NULL,
+	designation varchar(50) NOT NULL,
+	active varchar(1) DEFAULT 'Y'::character varying ,
+	last_working_day date NULL ,
+	CONSTRAINT employee_master PRIMARY KEY (employee_id),
+	CONSTRAINT employee_master_f_key FOREIGN KEY (office_id) REFERENCES employee_level.office_master(office_id)
+);
+
+
+-----------------------------------------------For employee_level Function 1-------------------------------------------------------------
+--employee_insert_update: This function will work for inserting data in employee_mst table
+--it will have a Flag that will Pass INSERT or UPDATE on the Basis of Which Insert or Update operation will follow
+--while insert we don't give Emp_Id and par_emp_code must be null or '' 
+-- creation of hierarcy and Manager Name will be when we pass manager mobile in par_manager_num 
+-- this function also add paid holiday in employee_leave_mst which is present in attendance_level schema
+
+CREATE OR REPLACE FUNCTION employee_level.employee_insert_update(par_flag character varying, par_emp_code character varying, par_emp_name character varying, par_emp_add text, par_email character varying, par_mobile character varying, par_manager_num character varying, par_dob date, par_office character varying, par_department character varying, par_designaton character varying)
+ RETURNS text
+ LANGUAGE plpgsql
+AS $function$
+declare
+var_result text;
+var_manager varchar(100);
+var_hierarcy varchar(100);
+v_emp_no int;
+begin
+if  coalesce(par_flag,'')='' then
+var_result:='Please provide opeartion flag';
+else
+if par_flag='UPDATE' then
+raise notice '1%',par_emp_code;
+select employee_manager,employee_hierarcy into var_manager,var_hierarcy from employee_level.employee_mst
+WHERE employee_id=par_emp_code;
+
+if coalesce(par_emp_code,'')='' then
+var_result:='Employee Code is Wrong';
+else
+select employee_name,employee_hierarcy into var_manager,var_hierarcy  from employee_level.employee_mst where employee_number =par_manager_num;
+UPDATE employee_level.employee_mst
+SET employee_name=case when coalesce(par_emp_name,'')='' then employee_name else par_emp_name end, 
+    employee_email=case when coalesce(par_email,'')='' then employee_email else par_email end, 
+    employee_number=case when coalesce(par_mobile,'')='' then employee_number else par_mobile end, 
+    employee_manager=case when coalesce(var_manager,'')='' then employee_manager  else var_manager end, 
+    employee_hierarcy=case when coalesce(par_emp_name,'')='' then employee_hierarcy else concat(par_mobile,'+',var_hierarcy) end, 
+    employee_dob=case when coalesce(par_dob,'1700-01-01'::date)='1700-01-01'::date then employee_dob else par_dob end, 
+    employee_address=case when coalesce(par_emp_name,'')='' then  employee_address else par_emp_add end,
+    modified_timestamp=now(),
+    department=case when coalesce(par_department,'')='' then department else par_department end,
+    office_id=case when coalesce(par_office,'')='' then  office_id else par_office end, 
+    designation=case when coalesce(par_designaton,'')='' then designation else par_designaton end
+WHERE employee_id=par_emp_code;
+
+var_result:='Employee Data Updated Successfully';
+end if;
+elsif par_flag='INSERT' then
+
+if coalesce(par_emp_name,'')='' then 
+var_result:='Please provide Employee Name';
+elsif coalesce(par_email,'')='' then 
+var_result:='Please provide Employee Name';
+elsif coalesce(par_mobile,'')='' then 
+var_result:='Please provide Employee Mobile';
+elsif coalesce(par_manager_num,'')='' then 
+var_result:='Please provide Manager Mobile';
+elsif coalesce(par_dob,'1700-01-01'::date)='1700-01-01'::date then 
+var_result:='Please provide date of birth';
+elsif coalesce(par_office,'')='' then 
+var_result:='Please provide Office code';
+elsif coalesce(par_department,'')='' then 
+var_result:='Please provide Department';
+elsif coalesce(par_designaton,'')='' then 	
+var_result:='Please provide Designation';
+else 
+ select max(substring(employee_id,4))::int+1 into v_emp_no from employee_level.employee_mst em ;
+ select employee_name,employee_hierarcy into var_manager,var_hierarcy  from employee_level.employee_mst where employee_number =par_manager_num;
+
+INSERT INTO employee_level.employee_mst
+(employee_id, employee_name, employee_email, employee_number, employee_manager, employee_hierarcy, employee_doj, employee_dob, employee_address, created_timestamp, modified_timestamp, department, office_id, designation)
+VALUES(concat('KV-',v_emp_no),par_emp_name , par_email, par_mobile, var_manager,concat(par_mobile,'+',var_hierarcy), now()::date,par_dob , par_emp_add, now(), now(),par_department , par_office, par_designaton);
+
+insert into attendance_level.employee_leave_mst(employee_id ,paid_leave_count)
+values(concat('KV-',v_emp_no),ceil(((date_part('month',now())+1)/12)*20));
+var_result:='Employee added to database successfully';
+
+end if;
+end if;
+end if;
+
+
+return var_result;
+end;
+$function$
+;
+
+
+-----------------------------------------------For employee_level Function 2-------------------------------------------------------------
+--employee_last_working_day will update the last working day for a leaving employee 
+--if we dont provide a last working day it will by default take 60 days interval for last working day
+
+CREATE OR REPLACE FUNCTION employee_level.employee_last_working_day(par_emp_code character varying, par_lwd_date date)
+ RETURNS text
+ LANGUAGE plpgsql
+AS $function$
+declare
+var_result text;
+var_count int;
+begin 
+	select count(1) into var_count from employee_level.employee_mst em where employee_id = par_emp_code;
+ if var_count=0 then
+ var_result:='Please Provide Valid Employee ID';
+ else 
+ update employee_level.employee_mst
+ set last_working_day=coalesce(par_lwd_date,(now() + interval ' 60days')::date)
+ where
+ employee_id=par_emp_code;
+  var_result:='Employee Last Working Day Updated'; 
+ end if; 
+return var_result;
+end;
+$function$
+;
+
+
+-----------------------------------------------For employee_level Function 3-------------------------------------------------------------
+--employee_inactive_schedular can be used for Scheduled job which will run a cursor to fetch the people whose last working day 
+--is current date or passed and call emplyoee inactive which change the manager and hierarcy for all impacted employee
+
+CREATE OR REPLACE FUNCTION employee_level.employee_inactive_schedular()
+ RETURNS text
+ LANGUAGE plpgsql
+AS $function$
+declare
+var_result text;
+var_count int;
+cur cursor for
+select employee_number from employee_level.employee_mst where last_working_day<now()::date and active='Y';
+begin 
+	for rec in cur loop 
+		perform employee_inactive(rec.employee_number); 
+	end loop;
+	var_result:='Scheduled Task Completed';
+return var_result;
+end;
+$function$
+;
+
+
+
+-----------------------------------------------For employee_level Function 4-------------------------------------------------------------
+--called by schedular employee_inactive_schedular which changes the impacted empolyee due to inactivated employee
+
+CREATE OR REPLACE FUNCTION employee_level.employee_inactive(par_employee_number character varying)
+ RETURNS integer
+ LANGUAGE plpgsql
+AS $function$
+declare
+var_result text;
+v_manager varchar(100);
+cur cursor for
+select employee_id from employee_level.employee_mst where employee_hierarcy like '%+'||par_employee_number||'%';
+begin 
+	
+	select employee_manager into v_manager from employee_level.employee_mst where employee_number = par_employee_number;
+	
+	for rec in cur loop 
+		 update employee_level.employee_mst
+		 set employee_manager=v_manager,
+		     employee_hierarcy=regexp_replace(employee_hierarcy,concat('\+',par_employee_number),'','g'),
+		 where employee_id=rec.employee_id ;
+	end loop;
+	
+return 0;
+end;
+$function$
+;
+
+
+-----------------------------------------------For attendance_level Schema---------------------------------------------------------------
+
+-----------------------------------------------For attendance_level table 1-------------------------------------------------------------		
+-- this table will contains the list of Public holiday
+
+CREATE TABLE attendance_level.holidays (
+	"date" date NOT NULL,
+	name_of_festival varchar(50) NOT NULL
+);
+
+-----------------------------------------------For attendance_level table 2-------------------------------------------------------------
+--its a calendar having date and day 
+
+CREATE TABLE attendance_level.calendar_mst (
+	date_list date NOT NULL,
+	day_list varchar(10) NULL,
+	CONSTRAINT calendar_mst_pk PRIMARY KEY (date_list)
+);
+
+-----------------------------------------------For attendance_level table 3-------------------------------------------------------------
+--its contains all employee and total holidays they have
+
+
+CREATE TABLE attendance_level.employee_leave_mst (
+	employee_id varchar(10) NOT NULL,
+	paid_leave_count int4 NULL,
+	CONSTRAINT employee_master PRIMARY KEY (employee_id)
+);
+
+-----------------------------------------------For attendance_level table 4-------------------------------------------------------------
+--its contains attendance related transaction
+
+CREATE TABLE attendance_level.attendance_transaction (
+	emp_id varchar NULL,
+	attendace_date date NULL,
+	log_out timestamp NULL,
+	log_in timestamp NULL,
+	work_time int2 NULL,
+	status varchar(50) NULL,
+	work_location varchar(3) NULL,
+	CONSTRAINT attendance_transaction_f_key FOREIGN KEY (emp_id) REFERENCES employee_level.employee_mst(employee_id)
+);
+
+-----------------------------------------------For attendance_level function 1-------------------------------------------------------------
+--used to log in attendace
+
+CREATE OR REPLACE FUNCTION attendance_level.loggedin(par_employee_id character varying, par_worklocation character varying)
+ RETURNS text
+ LANGUAGE plpgsql
+AS $function$
+declare
+var_result text;
+v_count int;
+begin 
+	
+select count(1) into v_count from attendance_transaction where emp_id=par_employee_id and attendace_date =current_date;
+ if v_count=0 then
+  INSERT INTO attendance_level.attendance_transaction
+              (emp_id, attendace_date, log_in,work_location,status)
+         VALUES(par_employee_id, 
+      current_date, 
+      now(),
+      par_worklocation,'Loggedin');
+
+ var_result:='Attendance Loggedin Successfully';
+else	
+ var_result:='Login Request have been Raised';
+ end if;
+ 
+return var_result;
+end;
+$function$
+;
+
+
+-----------------------------------------------For attendance_level function 2-------------------------------------------------------------
+--used to log out attendace
+
+CREATE OR REPLACE FUNCTION attendance_level.loggedout(par_employee_id character varying)
+ RETURNS text
+ LANGUAGE plpgsql
+AS $function$
+declare
+var_result text;
+v_count1 int;
+v_count2 int;
+v_login timestamp;
+begin 
+	
+select count(1) into v_count1 from attendance_transaction where emp_id=par_employee_id and attendace_date =current_date and status='Loggedin';
+ if v_count1=0 then
+ var_result:='Login Request Invalid';
+else
+
+select log_in into v_login from attendance_transaction where emp_id=par_employee_id and status='Loggedin';
+
+update attendance_transaction
+set log_out=now(),
+     work_time=to_Char(now()-v_login,'HH24')::int+(to_Char(now()-v_login,'MI')::int/60.0),
+     status= case when (to_Char(now()-v_login,'HH24')::int+(to_Char(now() -v_login,'MI')::int/60.0))>9.0 then 'Full Day' 
+                  when (to_Char(now()-v_login,'HH24')::int+(to_Char(now() -v_login,'MI')::int/60.0))>4.5 then 'Half Day'
+                  else 'Review' end
+    where  
+    emp_id=par_employee_id and status='Loggedin';
+ var_result:='Attendance Loggedin Successfully';
+ end if;
+ 
+return var_result;
+end;
+$function$
+;
+
+-----------------------------------------------For attendance_level function 3-------------------------------------------------------------
+--used to allot annual leave should be used as schedular 
+
+-- DROP FUNCTION attendance_level.leave_schedular();
+
+CREATE OR REPLACE FUNCTION attendance_level.leave_schedular()
+ RETURNS text
+ LANGUAGE plpgsql
+AS $function$
+declare
+var_result text;
+cur cursor for 
+select em.employee_id,date_part('year',now())-date_part('year',employee_doj)+ceil((date_part('month',now())-date_part('month',employee_doj))/12) years,
+                      elm.paid_leave_count from employee_level.employee_mst em 
+                                     join attendance_level.employee_leave_mst elm 
+                                     on elm.employee_id=em.employee_id
+                                     and em.active ='Y';
+begin 
+	 for rec in cur loop
+	 	update attendance_level.employee_leave_mst
+	 	set paid_leave_count= case when paid_leave_count>10*rec.years then 10*rec.years+24 else paid_leave_count+24 end
+	 	where employee_id=rec.employee_id;
+	 end loop;
+	 
+	var_result:='Scheduled Job Completed';
+	 
+return var_result;
+end;
+$function$
+;
+
+
+-----------------------------------------------For attendance_level function 4-------------------------------------------------------------
+--used to mark leave for the day
+
+CREATE OR REPLACE FUNCTION attendance_level.leave(par_employee_id character varying)
+ RETURNS text
+ LANGUAGE plpgsql
+AS $function$
+declare
+var_result text;
+v_count int;
+v_count1 int;
+
+begin 
+	select paid_leave_count into v_count from attendance_level.employee_leave_mst where employee_id=par_employee_id ;
+    select count(1) into v_count1 from attendance_level.attendance_transaction where emp_id=par_employee_id and attendace_date=(current_date)::date;
+   
+if  v_count1=0 then 
+if v_count >0 then
+INSERT INTO attendance_level.attendance_transaction
+(emp_id, attendace_date, log_out, log_in, work_time, status, work_location)
+VALUES(par_employee_id, current_date, now(),now(), 0, 'Paid Leave', '-');
+
+update attendance_level.employee_leave_mst 
+set paid_leave_count=paid_leave_count-1
+where employee_id=par_employee_id;
+else 
+INSERT INTO attendance_level.attendance_transaction
+(emp_id, attendace_date, log_out, log_in, work_time, status, work_location)
+VALUES(par_employee_id, current_date, now(), now(), 0, 'Unpaid Leave', '-');
+end if;
+else 
+if v_count >0 then
+UPDATE attendance_level.attendance_transaction
+SET attendace_date=current_date, log_out=now(), log_in=now(), work_time=0, status='Paid Leave', work_location='-'
+where emp_id=par_employee_id and attendace_date=current_date ;
+
+update attendance_level.employee_leave_mst 
+set paid_leave_count=paid_leave_count-1
+where employee_id=par_employee_id;
+else 
+UPDATE attendance_level.attendance_transaction
+SET attendace_date=current_date, log_out=now(), log_in=now(), work_time=0, status='UnPaid Leave', work_location='-'
+where emp_id=par_employee_id and attendace_date=current_date  ;
+
+end if;
+end if;
+return var_result;
+end;
+$function$
+;
+
+-----------------------------------------------For attendance_level view 1-------------------------------------------------------------
+--used to get the attendace aggregate for employee for a month
+
+CREATE OR REPLACE VIEW attendance_level.attendance_view
+AS     WITH Working_Days_CTE AS (
+    SELECT count(1) AS Working_Days
+    FROM attendance_level.calendar_mst cm
+    WHERE date_part('month', date_list) = date_part('month', current_date)
+      AND date_part('year', date_list) = date_part('year', current_date)
+      AND cm.day_list::text NOT IN ('Sunday', 'Saturday')
+)
+SELECT em.employee_name,
+       TO_CHAR(current_date, 'Month') AS month_name,
+       wd.Working_Days,
+       em.employee_email,
+       em.employee_number,
+       em.employee_manager,
+       em.designation,
+       tbl.emp_id,
+       tbl.full_day,
+       tbl.paid_leave,
+       tbl.unpaid_leave,
+       tbl.half_day,
+       tbl.review,
+       tbl.work_time,
+       tbl.work_from_office,
+       tbl.work_from_home,
+       tbl.leave_balance
+FROM (
+    SELECT tb.emp_id,
+           tb.full_day,
+           tb.paid_leave,
+           tb.unpaid_leave,
+           tb.half_day,
+           tb.review,
+           tb.work_time,
+           tb.work_from_office,
+           tb.work_from_home,
+           elm.paid_leave_count AS leave_balance
+    FROM (
+        SELECT at.emp_id,
+               SUM(CASE WHEN at.status::text = 'Full Day' THEN 1 ELSE 0 END) AS full_day,
+               SUM(CASE WHEN at.status::text = 'Paid Leave' THEN 1 ELSE 0 END) AS paid_leave,
+               SUM(CASE WHEN at.status::text = 'UnPaid Leave' THEN 1 ELSE 0 END) AS unpaid_leave,
+               SUM(CASE WHEN at.status::text = 'Half Day' THEN 1 ELSE 0 END) AS half_day,
+               SUM(CASE WHEN at.status::text = 'Review' THEN 1 ELSE 0 END) AS review,
+               SUM(at.work_time::double precision) AS work_time,
+               SUM(CASE WHEN at.work_location::text = 'WFO' THEN 1 ELSE 0 END) AS work_from_office,
+               SUM(CASE WHEN at.work_location::text = 'WFH' THEN 1 ELSE 0 END) AS work_from_home
+        FROM attendance_level.attendance_transaction at
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM attendance_level.calendar_mst cm
+            WHERE at.attendace_date = cm.date_list
+              AND cm.day_list::text IN ('Sunday', 'Saturday')
+        ) AND NOT EXISTS (
+            SELECT 1
+            FROM attendance_level.holidays h
+            WHERE at.attendace_date = h.date
+        )
+          AND date_part('month', at.attendace_date) = date_part('month', current_date)
+        GROUP BY at.emp_id
+    ) tb
+    JOIN attendance_level.employee_leave_mst elm ON elm.employee_id::text = tb.emp_id::text
+) tbl
+JOIN employee_level.employee_mst em ON em.employee_id::text = tbl.emp_id::text
+JOIN Working_Days_CTE wd ON TRUE;
+
